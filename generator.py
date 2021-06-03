@@ -6,10 +6,9 @@ import tensorflow as tf
 
 
 class AutoEncoderDataGenerator(tf.keras.utils.Sequence):
-    def __init__(self, image_paths, input_shape, ae_input_shape, encoding_dim, batch_size, img_type):
+    def __init__(self, image_paths, input_shape, encoding_dim, batch_size, img_type):
         self.image_paths = image_paths
         self.input_shape = input_shape
-        self.ae_input_shape = ae_input_shape
         self.encoding_dim = encoding_dim
         self.batch_size = batch_size
         self.img_type = img_type
@@ -29,10 +28,9 @@ class AutoEncoderDataGenerator(tf.keras.utils.Sequence):
         for f in fs:
             x = f.result()
             x = cv2.resize(x, (self.input_shape[1], self.input_shape[0]))
-            x = np.asarray(x).reshape(self.ae_input_shape).astype('float32') / 255.0
-            y = x.reshape(self.input_shape)
+            x = np.asarray(x).reshape(self.input_shape).astype('float32') / 255.0
             batch_x.append(x)
-            batch_y.append(y)
+            batch_y.append(x)
         return np.asarray(batch_x), np.asarray(batch_y)
 
     def __load_image(self, image_path):

@@ -41,10 +41,6 @@ class AutoEncoder:
         self.pool = ThreadPoolExecutor(8)
         self.train_image_paths = glob(rf'{train_image_path}/*.jpg')
         self.input_shape = input_shape
-        self.ae_input_shape = 1
-        for cur_shape in self.input_shape:
-            self.ae_input_shape *= cur_shape
-        self.ae_input_shape = (self.ae_input_shape,)
         self.validation_image_paths = []
         if validation_image_path != '':
             self.validation_image_paths = glob(rf'{validation_image_path}/*.jpg')
@@ -58,19 +54,16 @@ class AutoEncoder:
 
         self.model = Model(
             input_shape=self.input_shape,
-            ae_input_shape=self.ae_input_shape,
             encoding_dim=self.encoding_dim)
         self.train_data_generator = AutoEncoderDataGenerator(
             image_paths=self.train_image_paths,
             input_shape=self.input_shape,
-            ae_input_shape=self.ae_input_shape,
             encoding_dim=self.encoding_dim,
             batch_size=self.batch_size,
             img_type=self.img_type)
         self.validation_data_generator = AutoEncoderDataGenerator(
             image_paths=self.validation_image_paths,
             input_shape=self.input_shape,
-            ae_input_shape=self.ae_input_shape,
             encoding_dim=self.encoding_dim,
             batch_size=self.batch_size,
             img_type=self.img_type)
@@ -88,7 +81,7 @@ class AutoEncoder:
                 live_view_previous_time = cur_time
                 __x = cv2.imread(self.train_image_paths[randrange(0, len(self.train_image_paths))], self.img_type)
                 __x = cv2.resize(__x, (self.input_shape[1], self.input_shape[0]))
-                __x = np.asarray(__x).reshape((1,) + self.ae_input_shape) / 255.0
+                __x = np.asarray(__x).reshape((1,) + self.input_shape) / 255.0
                 __y = predict_on_graph(self.model.ae, __x)
                 __x = np.clip(__x * 255.0, 0, 255).astype('uint8').reshape(self.input_shape)
                 __y = np.clip(__y * 255.0, 0, 255).astype('uint8').reshape(self.input_shape)
