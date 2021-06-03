@@ -37,6 +37,7 @@ class AutoEncoder:
             lr,
             epochs,
             batch_size,
+            pretrained_model_path='',
             validation_image_path=''):
         self.pool = ThreadPoolExecutor(8)
         self.train_image_paths = glob(rf'{train_image_path}/*.jpg')
@@ -55,6 +56,8 @@ class AutoEncoder:
         self.model = Model(
             input_shape=self.input_shape,
             encoding_dim=self.encoding_dim)
+        if pretrained_model_path != '':
+            self.model.ae = tf.keras.models.load_model(pretrained_model_path, compile=False)
         self.train_data_generator = AutoEncoderDataGenerator(
             image_paths=self.train_image_paths,
             input_shape=self.input_shape,
