@@ -15,6 +15,19 @@ os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 live_view_previous_time = time()
 
 
+class LearningRateSchedulingCallback(tf.keras.callbacks.Callback):
+    def __init__(self, lr, epochs):
+        self.lr = lr
+        self.epochs = epochs
+        self.decay_step = epochs / 10
+        super().__init__()
+
+    def on_epoch_end(self, epoch, logs=None):
+        if epoch != 1 and (epoch - 1) % self.decay_step == 0:
+            self.lr *= 0.5
+            tf.keras.backend.set_value(self.model.optimizer.lr, self.lr)
+
+
 class AutoEncoder:
     def __init__(
             self,
@@ -93,9 +106,10 @@ class AutoEncoder:
         if not (os.path.exists('checkpoints') and os.path.isdir('checkpoints')):
             os.makedirs('checkpoints', exist_ok=True)
         callbacks = [
+            LearningRateSchedulingCallback(self.lr, self.epochs),
             tf.keras.callbacks.LambdaCallback(on_batch_end=training_view),
             tf.keras.callbacks.ModelCheckpoint(
-                filepath='checkpoints/encoder_epoch_{epoch}_loss_{loss:.4f}_val_loss_{val_loss:.4f}.h5',
+                filepath='checkpoints/ae_epoch_{epoch}_loss_{loss:.4f}_val_loss_{val_loss:.4f}.h5',
                 monitor='val_loss',
                 mode='min',
                 save_best_only=True)]
@@ -114,5 +128,15 @@ class AutoEncoder:
                 batch_size=self.batch_size,
                 epochs=self.epochs,
                 callbacks=callbacks)
-        self.model.encoder.save('encoder.h5')
         cv2.destroyAllWindows()
+
+    @staticmethod
+    def extract_encoder_from_ae(pretrained_ae_path):
+        pretrained_ae = tf.keras.models.load_model(pretrained_ae_path, compile=False)
+        encoder = tf.keras.models.Sequential()
+        for layer in pretrained_ae.layers:
+            encoder.add(layer)
+            if layer.name == 'encoder_output':
+                break
+        ae_file_name = pretrained_ae_path.replace('\\', '/').split('/')[-1]
+        encoder.save(f'encoder_{ae_file_name[3:]}')
