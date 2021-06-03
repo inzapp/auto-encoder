@@ -9,26 +9,22 @@ class Model:
         self.ae = self.__get_model()
 
     def __get_model(self):
-        return tf.keras.models.Sequential([
-            tf.keras.layers.InputLayer(input_shape=self.ae_input_shape),
-            tf.keras.layers.Dense(
-                units=128,
-                kernel_initializer='he_uniform',
-                use_bias=False),
-            tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.ReLU(),
-            tf.keras.layers.Dense(
-                units=self.encoding_dim,
-                kernel_initializer='glorot_uniform',
-                activation='sigmoid',
-                name='encoder_output'),
-            tf.keras.layers.Dense(
-                units=128,
-                kernel_initializer='he_uniform',
-                use_bias=False),
-            tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.ReLU(),
-            tf.keras.layers.Dense(
-                units=int(self.input_shape[0] * self.input_shape[1] * self.input_shape[2]),
-                activation='sigmoid'),
-            tf.keras.layers.Reshape(target_shape=self.input_shape)])
+        input_layer = tf.keras.layers.Input(shape=self.ae_input_shape)
+        x = tf.keras.layers.Dense(
+            units=128,
+            kernel_initializer='he_uniform',
+            activation='relu')(input_layer)
+        x = tf.keras.layers.Dense(
+            units=self.encoding_dim,
+            kernel_initializer='glorot_uniform',
+            activation='sigmoid',
+            name='encoder_output')(x)
+        x = tf.keras.layers.Dense(
+            units=128,
+            kernel_initializer='he_uniform',
+            activation='relu')(x)
+        x = tf.keras.layers.Dense(
+            units=int(self.input_shape[0] * self.input_shape[1] * self.input_shape[2]),
+            activation='sigmoid')(x)
+        x = tf.keras.layers.Reshape(target_shape=self.input_shape)(x)
+        return tf.keras.models.Model(input_layer, x)
