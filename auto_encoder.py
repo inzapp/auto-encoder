@@ -135,4 +135,6 @@ class AutoEncoder:
             if layer.name == 'encoder_output':
                 break
         ae_file_name = pretrained_ae_path.replace('\\', '/').split('/')[-1]
-        encoder.save(f'encoder_{ae_file_name[3:]}')
+        encoder_file_name = f'encoder_{ae_file_name[3:]}'
+        encoder_path = pretrained_ae_path.replace(ae_file_name, encoder_file_name)
+        encoder.save(encoder_path)
