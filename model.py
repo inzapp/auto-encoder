@@ -46,7 +46,7 @@ class Model:
         x = tf.keras.layers.MaxPool2D()(x)
 
         x = tf.keras.layers.Conv2D(
-            filters=32,
+            filters=self.encoding_dim,
             kernel_size=3,
             kernel_initializer='he_uniform',
             padding='same')(x)
@@ -57,7 +57,7 @@ class Model:
         x = tf.keras.layers.Reshape(target_shape=(1, 1, self.encoding_dim))(x)
         x = tf.keras.layers.UpSampling2D()(x)
         x = tf.keras.layers.Conv2DTranspose(
-            filters=32,
+            filters=self.encoding_dim,
             kernel_size=3,
             kernel_initializer='he_uniform',
             padding='same')(x)
