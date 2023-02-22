@@ -1,140 +1,150 @@
-import os
-from concurrent.futures.thread import ThreadPoolExecutor
-from glob import glob
-from random import randrange
-from time import time
+"""
+Authors : inzapp
 
+Github url : https://github.com/inzapp/auto-encoder
+
+Copyright (c) 2021 Inzapp
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+"""
+import os
 import cv2
 import numpy as np
 import tensorflow as tf
 
-from generator import AutoEncoderDataGenerator
+from glob import glob
+from time import time
 from model import Model
-
-os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
-live_view_previous_time = time()
-
-
-class LearningRateSchedulingCallback(tf.keras.callbacks.Callback):
-    def __init__(self, lr, epochs):
-        self.lr = lr
-        self.epochs = epochs
-        self.decay_step = epochs / 10
-        super().__init__()
-
-    def on_epoch_end(self, epoch, logs=None):
-        if epoch != 1 and (epoch - 1) % self.decay_step == 0:
-            self.lr *= 0.5
-            tf.keras.backend.set_value(self.model.optimizer.lr, self.lr)
+from lr_scheduler import LRScheduler
+from generator import DataGenerator
 
 
 class AutoEncoder:
-    def __init__(
-            self,
-            train_image_path,
-            input_shape,
-            encoding_dim,
-            lr,
-            epochs,
-            batch_size,
-            pretrained_model_path='',
-            validation_image_path=''):
-        self.pool = ThreadPoolExecutor(8)
-        self.train_image_paths = glob(rf'{train_image_path}/*.jpg')
+    def __init__(self,
+                 train_image_path,
+                 validation_image_path,
+                 input_shape,
+                 lr,
+                 warm_up,
+                 batch_size,
+                 latent_dim,
+                 iterations,
+                 save_interval,
+                 training_view,
+                 checkpoint_path='checkpoint'):
+        assert input_shape[2] in [1, 3]
         self.input_shape = input_shape
-        self.validation_image_paths = []
-        if validation_image_path != '':
-            self.validation_image_paths = glob(rf'{validation_image_path}/*.jpg')
-        self.encoding_dim = encoding_dim
         self.lr = lr
-        self.epochs = epochs
+        self.warm_up = warm_up
         self.batch_size = batch_size
-        self.img_type = cv2.IMREAD_COLOR
-        if input_shape[-1] == 1:
-            self.img_type = cv2.IMREAD_GRAYSCALE
+        self.latent_dim = latent_dim
+        self.save_interval = save_interval
+        self.iterations = iterations
+        self.training_view = training_view
+        self.checkpoint_path = checkpoint_path
+        self.live_view_previous_time = time()
 
-        self.model = Model(
-            input_shape=self.input_shape,
-            encoding_dim=self.encoding_dim)
-        if pretrained_model_path != '':
-            self.model.ae = tf.keras.models.load_model(pretrained_model_path, compile=False)
-        self.train_data_generator = AutoEncoderDataGenerator(
+        if not self.is_valid_path(train_image_path):
+            print(f'train image path is not valid : {train_image_path}')
+            exit(0)
+        if not self.is_valid_path(validation_image_path):
+            print(f'validation image path is not valid : {validation_image_path}')
+            exit(0)
+
+        self.train_image_paths = self.init_image_paths(train_image_path)
+        if len(self.train_image_paths) <= self.batch_size:
+            print(f'image count({len(train_image_path)}) is lower than batch size({self.batch_size})')
+            exit(0)
+        self.validation_image_paths = self.init_image_paths(validation_image_path)
+        if len(self.validation_image_paths) <= self.batch_size:
+            print(f'image count({len(validation_image_path)}) is lower than batch size({self.batch_size})')
+            exit(0)
+
+        self.model = Model(input_shape=input_shape, latent_dim=self.latent_dim)
+        self.encoder, self.decoder, self.ae = self.model.build()
+        self.train_data_generator = DataGenerator(
             image_paths=self.train_image_paths,
-            input_shape=self.input_shape,
-            encoding_dim=self.encoding_dim,
-            batch_size=self.batch_size,
-            img_type=self.img_type)
-        self.validation_data_generator = AutoEncoderDataGenerator(
-            image_paths=self.validation_image_paths,
-            input_shape=self.input_shape,
-            encoding_dim=self.encoding_dim,
-            batch_size=self.batch_size,
-            img_type=self.img_type)
+            input_shape=input_shape,
+            batch_size=batch_size)
+
+    def is_valid_path(self, path):
+        return os.path.exists(path) and os.path.isdir(path)
+
+    def init_image_paths(self, image_path):
+        return glob(f'{image_path}/**/*.jpg', recursive=True)
+
+    @tf.function
+    def compute_gradient(self, encoder, decoder, optimizer, x):
+        with tf.GradientTape() as tape:
+            z = encoder(x, training=True)
+            y_pred = decoder(z, training=True)
+            loss = tf.reduce_mean(tf.square(x - y_pred))
+        trainable_variables = encoder.trainable_variables + decoder.trainable_variables
+        gradients = tape.gradient(loss, trainable_variables)
+        optimizer.apply_gradients(zip(gradients, trainable_variables))
+        return loss
 
     def fit(self):
+        self.model.summary()
+        print(f'\ntrain on {len(self.train_image_paths)} samples.')
+        print('start training')
+        iteration_count = 0
+        os.makedirs(self.checkpoint_path, exist_ok=True)
+        optimizer = tf.keras.optimizers.Adam(lr=self.lr)
+        lr_scheduler = LRScheduler(lr=self.lr, iterations=self.iterations, warm_up=self.warm_up, policy='step')
+        while True:
+            for x in self.train_data_generator:
+                lr_scheduler.update(optimizer, iteration_count)
+                loss = self.compute_gradient(self.encoder, self.decoder, optimizer, x)
+                iteration_count += 1
+                print(f'\r[iteration_count : {iteration_count:6d}] loss : {loss:>8.4f}', end='')
+                if self.training_view:
+                    self.training_view_function()
+                if iteration_count % self.save_interval == 0:
+                    self.encoder.save(f'{self.checkpoint_path}/encoder_{iteration_count}_iter.h5', include_optimizer=False)
+                    self.decoder.save(f'{self.checkpoint_path}/decoder_{iteration_count}_iter.h5', include_optimizer=False)
+                if iteration_count == self.iterations:
+                    print('\ntrain end successfully')
+                    return
 
-        @tf.function
-        def predict_on_graph(model, x):
-            return model(x, training=False)
+    @tf.function
+    def graph_forward(self, model, x):
+        return model(x, training=False)
 
-        def training_view(batch, logs):
-            global live_view_previous_time
-            cur_time = time()
-            if cur_time - live_view_previous_time > 0.5:
-                live_view_previous_time = cur_time
-                __x = cv2.imread(self.train_image_paths[randrange(0, len(self.train_image_paths))], self.img_type)
-                __x = cv2.resize(__x, (self.input_shape[1], self.input_shape[0]))
-                __x = np.asarray(__x).reshape((1,) + self.input_shape) / 255.0
-                __y = predict_on_graph(self.model.ae, __x)
-                __x = np.clip(__x * 255.0, 0, 255).astype('uint8').reshape(self.input_shape)
-                __y = np.clip(__y * 255.0, 0, 255).astype('uint8').reshape(self.input_shape)
-                __x = cv2.resize(__x, (128, 128), interpolation=cv2.INTER_LINEAR)
-                __y = cv2.resize(__y, (128, 128), interpolation=cv2.INTER_LINEAR)
-                cv2.imshow('ae', np.concatenate((__x, __y), axis=1))
-                cv2.waitKey(1)
-
-        self.model.ae.compile(
-            optimizer=tf.keras.optimizers.Adam(lr=self.lr),
-            loss=tf.keras.losses.MeanSquaredError())
-        self.model.ae.summary()
-        print(f'\ntrain on {len(self.train_image_paths)} samples')
-
-        if not (os.path.exists('checkpoints') and os.path.isdir('checkpoints')):
-            os.makedirs('checkpoints', exist_ok=True)
-        callbacks = [
-            LearningRateSchedulingCallback(self.lr, self.epochs),
-            tf.keras.callbacks.LambdaCallback(on_batch_end=training_view),
-            tf.keras.callbacks.ModelCheckpoint(
-                filepath='checkpoints/ae_epoch_{epoch}_loss_{loss:.4f}_val_loss_{val_loss:.4f}.h5',
-                monitor='val_loss',
-                mode='min',
-                save_best_only=True)]
-
-        if len(self.validation_image_paths) > 0:
-            print(f'validate on {len(self.validation_image_paths)} samples')
-            self.model.ae.fit(
-                x=self.train_data_generator,
-                validation_data=self.validation_data_generator,
-                batch_size=self.batch_size,
-                epochs=self.epochs,
-                callbacks=callbacks)
+    def resize(self, img, size):
+        if img.shape[1] > size[0] or img.shape[0] > size[1]:
+            return cv2.resize(img, size, interpolation=cv2.INTER_LINEAR)
         else:
-            self.model.ae.fit(
-                x=self.train_data_generator,
-                batch_size=self.batch_size,
-                epochs=self.epochs,
-                callbacks=callbacks)
-        cv2.destroyAllWindows()
+            return cv2.resize(img, size, interpolation=cv2.INTER_LINEAR)
 
-    @staticmethod
-    def extract_encoder_from_ae(pretrained_ae_path):
-        pretrained_ae = tf.keras.models.load_model(pretrained_ae_path, compile=False)
-        encoder = tf.keras.models.Sequential()
-        for layer in pretrained_ae.layers:
-            encoder.add(layer)
-            if layer.name == 'encoder_output':
-                break
-        ae_file_name = pretrained_ae_path.replace('\\', '/').split('/')[-1]
-        encoder_file_name = f'encoder_{ae_file_name[3:]}'
-        encoder_path = pretrained_ae_path.replace(ae_file_name, encoder_file_name)
-        encoder.save(encoder_path)
+    def training_view_function(self):
+        cur_time = time()
+        if cur_time - self.live_view_previous_time > 0.5:
+            self.live_view_previous_time = cur_time
+            img_path = np.random.choice(self.validation_image_paths)
+            input_shape = self.ae.input_shape[1:]
+            img = cv2.imdecode(np.fromfile(img_path, dtype=np.uint8), cv2.IMREAD_GRAYSCALE if input_shape[-1] == 1 else cv2.IMREAD_COLOR)
+            img = self.resize(img, (input_shape[1], input_shape[0]))
+            x = DataGenerator.normalize(img).reshape((1,) + input_shape)
+            decoded_image = DataGenerator.denormalize(self.graph_forward(self.ae, x))
+            random_image = DataGenerator.denormalize(self.graph_forward(self.decoder, np.random.normal(loc=0.0, scale=1.0, size=self.latent_dim).reshape((1, self.latent_dim))))
+            cv2.imshow('training view', np.concatenate((img.reshape(input_shape), decoded_image.reshape(input_shape), random_image.reshape(input_shape)), axis=1))
+            cv2.waitKey(1)
+

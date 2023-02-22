@@ -1,43 +1,92 @@
-from concurrent.futures.thread import ThreadPoolExecutor
+"""
+Authors : inzapp
 
+Github url : https://github.com/inzapp/auto-encoder
+
+Copyright (c) 2021 Inzapp
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+"""
 import cv2
 import numpy as np
-import tensorflow as tf
+from concurrent.futures.thread import ThreadPoolExecutor
 
 
-class AutoEncoderDataGenerator(tf.keras.utils.Sequence):
-    def __init__(self, image_paths, input_shape, encoding_dim, batch_size, img_type):
+class DataGenerator:
+    def __init__(self,
+                 image_paths,
+                 input_shape,
+                 batch_size,
+                 dtype='float32'):
         self.image_paths = image_paths
         self.input_shape = input_shape
-        self.encoding_dim = encoding_dim
         self.batch_size = batch_size
-        self.img_type = img_type
-        self.random_indexes = np.arange(len(self.image_paths))
+        self.dtype = dtype
         self.pool = ThreadPoolExecutor(8)
-        np.random.shuffle(self.random_indexes)
-
-    def __getitem__(self, index):
-        batch_x = []
-        batch_y = []
-        start_index = index * self.batch_size
-        fs = []
-        for i in range(start_index, start_index + self.batch_size):
-            cur_img_path = self.image_paths[self.random_indexes[i]]
-            fs.append(self.pool.submit(self.__load_image, cur_img_path))
-
-        for f in fs:
-            x = f.result()
-            x = cv2.resize(x, (self.input_shape[1], self.input_shape[0]))
-            x = np.asarray(x).reshape(self.input_shape).astype('float32') / 255.0
-            batch_x.append(x)
-            batch_y.append(x)
-        return np.asarray(batch_x), np.asarray(batch_y)
-
-    def __load_image(self, image_path):
-        return cv2.imread(image_path, self.img_type)
+        self.img_index = 0
 
     def __len__(self):
         return int(np.floor(len(self.image_paths) / self.batch_size))
 
-    def on_epoch_end(self):
-        np.random.shuffle(self.random_indexes)
+    def __getitem__(self, index):
+        fs = []
+        for _ in range(self.batch_size):
+            fs.append(self.pool.submit(self.load_image, self.next_image_path()))
+        batch_x = []
+        for f in fs:
+            img = f.result()
+            img = self.resize(img, (self.input_shape[1], self.input_shape[0]))
+            x = self.normalize(np.asarray(img).reshape(self.input_shape))
+            batch_x.append(x)
+        batch_x = np.asarray(batch_x).astype(self.dtype)
+        return batch_x
+
+    @staticmethod
+    def normalize(x):
+        return np.clip((np.asarray(x).astype('float32') - 127.5) / 127.5, -1.0, 1.0)
+
+    @staticmethod
+    def denormalize(x):
+        return np.asarray(np.clip((x * 127.5) + 127.5, 0.0, 255.0)).astype('uint8')
+
+    @staticmethod
+    def get_z_vector(size):
+        return np.random.normal(loc=0.0, scale=1.0, size=size)
+
+    def next_image_path(self):
+        path = self.image_paths[self.img_index]
+        self.img_index += 1
+        if self.img_index == len(self.image_paths):
+            self.img_index = 0
+            np.random.shuffle(self.image_paths)
+        return path
+
+    def resize(self, img, size):
+        interpolation = None
+        img_height, img_width = img.shape[:2]
+        if size[0] > img_width or size[1] > img_height:
+            interpolation = cv2.INTER_LINEAR
+        else:
+            interpolation = cv2.INTER_AREA
+        return cv2.resize(img, size, interpolation=interpolation)
+
+    def load_image(self, image_path):
+        return cv2.imdecode(np.fromfile(image_path, dtype=np.uint8), cv2.IMREAD_GRAYSCALE if self.input_shape[-1] == 1 else cv2.IMREAD_COLOR)
+
