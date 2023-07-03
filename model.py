@@ -82,7 +82,7 @@ class Model:
             filters=filters,
             padding='same',
             kernel_size=kernel_size,
-            use_bias=False if bn else True,
+            use_bias=not bn,
             kernel_initializer=self.kernel_initializer())(x)
         if bn:
             x = self.batch_normalization(x)
@@ -94,7 +94,7 @@ class Model:
             filters=filters,
             padding='same',
             kernel_size=kernel_size,
-            use_bias=False if bn else True,
+            use_bias=not bn,
             kernel_initializer=self.kernel_initializer())(x)
         if bn:
             x = self.batch_normalization(x)
@@ -103,7 +103,7 @@ class Model:
     def dense(self, x, units, bn=False, activation='relu'):
         x = tf.keras.layers.Dense(
             units=units,
-            use_bias=False if bn else True,
+            use_bias=not bn,
             kernel_initializer=self.kernel_initializer())(x)
         if bn:
             x = self.batch_normalization(x)
