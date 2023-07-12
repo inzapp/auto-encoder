@@ -84,7 +84,7 @@ class Model:
         return self.dense(x, latent_dim, bn=False, activation='linear')
 
     def decoding_layer(self, x):
-        return self.conv2d(x, self.input_shape[-1], 1, 1, bn=False, activation='tanh')
+        return self.conv2d(x, self.input_shape[-1], 1, 1, bn=False, activation='sigmoid')
 
     def conv2d(self, x, filters, kernel_size, strides, bn=False, activation='relu'):
         x = tf.keras.layers.Conv2D(

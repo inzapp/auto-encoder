@@ -60,11 +60,11 @@ class DataGenerator:
 
     @staticmethod
     def normalize(x):
-        return np.clip((np.asarray(x).astype('float32') - 127.5) / 127.5, -1.0, 1.0)
+        return np.clip(np.asarray(x).astype('float32') / 255.0, 0.0, 1.0)
 
     @staticmethod
     def denormalize(x):
-        return np.asarray(np.clip((x * 127.5) + 127.5, 0.0, 255.0)).astype('uint8')
+        return np.asarray(np.clip((x * 255.0), 0.0, 255.0)).astype('uint8')
 
     @staticmethod
     def get_z_vector(size):
