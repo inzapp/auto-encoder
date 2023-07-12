@@ -47,9 +47,11 @@ class AutoEncoder:
                  latent_dim,
                  iterations,
                  save_interval,
+                 strided_model,
                  training_view,
                  checkpoint_path='checkpoint'):
         assert input_shape[2] in [1, 3]
+        assert save_interval >= 1000
         self.input_shape = input_shape
         self.lr = lr
         self.warm_up = warm_up
@@ -77,7 +79,7 @@ class AutoEncoder:
             print(f'image count({len(validation_image_path)}) is lower than batch size({self.batch_size})')
             exit(0)
 
-        self.model = Model(input_shape=input_shape, latent_dim=self.latent_dim)
+        self.model = Model(input_shape=input_shape, latent_dim=self.latent_dim, strided_model=strided_model)
         self.encoder, self.decoder, self.ae = self.model.build()
         self.train_data_generator = DataGenerator(
             image_paths=self.train_image_paths,

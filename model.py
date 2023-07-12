@@ -32,9 +32,10 @@ os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
 
 class Model:
-    def __init__(self, input_shape, latent_dim):
+    def __init__(self, input_shape, latent_dim, strided_model):
         self.input_shape = input_shape
         self.latent_dim = latent_dim
+        self.strided_model = strided_model
         self.ae = None
         self.decoder = None
         self.encoder = None
@@ -43,15 +44,19 @@ class Model:
 
     def build(self):
         assert self.input_shape[0] % 32 == 0 and self.input_shape[1] % 32 == 0
-        encoder_input, encoder_output = self.build_encoder(bn=False)
-        decoder_input, decoder_output = self.build_decoder(bn=False)
+        if self.strided_model:
+            encoder_input, encoder_output = self.build_encoder_stride(bn=False)
+            decoder_input, decoder_output = self.build_decoder_stride(bn=False)
+        else:
+            encoder_input, encoder_output = self.build_encoder_sample(bn=False)
+            decoder_input, decoder_output = self.build_decoder_sample(bn=False)
         self.decoder = tf.keras.models.Model(decoder_input, decoder_output)
         self.encoder = tf.keras.models.Model(encoder_input, encoder_output)
         ae_output = self.decoder(encoder_output)
         self.ae = tf.keras.models.Model(encoder_input, ae_output)
         return self.encoder, self.decoder, self.ae
 
-    def build_encoder(self, bn):
+    def build_encoder_stride(self, bn):
         encoder_input = tf.keras.layers.Input(shape=self.input_shape)
         x = encoder_input
         x = self.conv2d(x,  32, 3, 2, activation='relu', bn=bn)
@@ -63,7 +68,24 @@ class Model:
         encoder_output = self.dense(x, self.latent_dim, activation='linear', bn=bn)
         return encoder_input, encoder_output
 
-    def build_decoder(self, bn):
+    def build_encoder_sample(self, bn):
+        encoder_input = tf.keras.layers.Input(shape=self.input_shape)
+        x = encoder_input
+        x = self.conv2d(x,  32, 3, 1, activation='relu', bn=bn)
+        x = self.max_pool(x)
+        x = self.conv2d(x,  64, 3, 1, activation='relu', bn=bn)
+        x = self.max_pool(x)
+        x = self.conv2d(x, 128, 3, 1, activation='relu', bn=bn)
+        x = self.max_pool(x)
+        x = self.conv2d(x, 256, 3, 1, activation='relu', bn=bn)
+        x = self.max_pool(x)
+        x = self.conv2d(x, 512, 3, 1, activation='relu', bn=bn)
+        x = self.max_pool(x)
+        x = self.flatten(x)
+        encoder_output = self.dense(x, self.latent_dim, activation='linear', bn=bn)
+        return encoder_input, encoder_output
+
+    def build_decoder_stride(self, bn):
         decoder_input = tf.keras.layers.Input(shape=(self.latent_dim,))
         x = decoder_input
         x = self.dense(x, self.latent_rows * self.latent_cols * 512, activation='relu', bn=bn)
@@ -73,6 +95,24 @@ class Model:
         x = self.conv2d_transpose(x, 128, 3, 2, activation='relu', bn=bn)
         x = self.conv2d_transpose(x,  64, 3, 2, activation='relu', bn=bn)
         x = self.conv2d_transpose(x,  32, 3, 2, activation='relu', bn=bn)
+        decoder_output = self.conv2d_transpose(x, self.input_shape[-1], 1, 1, activation='tanh', bn=bn)
+        return decoder_input, decoder_output
+
+    def build_decoder_sample(self, bn):
+        decoder_input = tf.keras.layers.Input(shape=(self.latent_dim,))
+        x = decoder_input
+        x = self.dense(x, self.latent_rows * self.latent_cols * 512, activation='relu', bn=bn)
+        x = self.reshape(x, (self.latent_rows, self.latent_cols, 512))
+        x = self.upsampling(x)
+        x = self.conv2d(x, 512, 3, 1, activation='relu', bn=bn)
+        x = self.upsampling(x)
+        x = self.conv2d(x, 256, 3, 1, activation='relu', bn=bn)
+        x = self.upsampling(x)
+        x = self.conv2d(x, 128, 3, 1, activation='relu', bn=bn)
+        x = self.upsampling(x)
+        x = self.conv2d(x,  64, 3, 1, activation='relu', bn=bn)
+        x = self.upsampling(x)
+        x = self.conv2d(x,  32, 3, 1, activation='relu', bn=bn)
         decoder_output = self.conv2d_transpose(x, self.input_shape[-1], 1, 1, activation='tanh', bn=bn)
         return decoder_input, decoder_output
 
@@ -121,6 +161,15 @@ class Model:
         else:
             x = tf.keras.layers.Activation(activation=activation)(x)
         return x
+
+    def max_pool(self, x):
+        return tf.keras.layers.MaxPool2D()(x)
+
+    def upsampling(self, x):
+        return tf.keras.layers.UpSampling2D()(x)
+
+    def add(self, layers):
+        return tf.keras.layers.Add()(layers)
 
     def reshape(self, x, target_shape):
         return tf.keras.layers.Reshape(target_shape=target_shape)(x)

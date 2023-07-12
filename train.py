@@ -31,11 +31,12 @@ if __name__ == '__main__':
         input_shape=(32, 32, 1),
         train_image_path=r'/train_data/imagenet/train',
         validation_image_path=r'/train_data/imagenet/validation',
-        lr=1e-3,
-        warm_up=0.1,
+        lr=0.001,
+        warm_up=0.5,
         batch_size=32,
         latent_dim=32,
         iterations=100000,
-        save_interval=10000,
+        save_interval=5000,
+        strided_model=True,
         training_view=True).fit()
 
