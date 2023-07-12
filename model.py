@@ -58,27 +58,33 @@ class Model:
         x = encoder_input
         for channel in self.channels:
             if self.strided_model:
-                x = self.conv2d(x, channel, 3, 2, activation='relu', bn=bn)
+                x = self.conv2d(x, channel, 3, 2, bn=bn)
             else:
-                x = self.conv2d(x, channel, 3, 1, activation='relu', bn=bn)
+                x = self.conv2d(x, channel, 3, 1, bn=bn)
                 x = self.max_pool(x)
         x = self.flatten(x)
-        encoder_output = self.dense(x, self.latent_dim, activation='linear', bn=bn)
+        encoder_output = self.encoding_layer(x, self.latent_dim)
         return encoder_input, encoder_output
 
     def build_decoder(self, bn=False):
         decoder_input = tf.keras.layers.Input(shape=(self.latent_dim,))
         x = decoder_input
-        x = self.dense(x, self.latent_rows * self.latent_cols * self.channels[-1], activation='relu', bn=bn)
+        x = self.dense(x, self.latent_rows * self.latent_cols * self.channels[-1], bn=bn)
         x = self.reshape(x, (self.latent_rows, self.latent_cols, self.channels[-1]))
         for channel in reversed(self.channels):
             if self.strided_model:
-                x = self.conv2d_transpose(x, channel, 3, 2, activation='relu', bn=bn)
+                x = self.conv2d_transpose(x, channel, 3, 2, bn=bn)
             else:
                 x = self.upsampling(x)
-                x = self.conv2d(x, channel, 3, 1, activation='relu', bn=bn)
-        decoder_output = self.conv2d_transpose(x, self.input_shape[-1], 1, 1, activation='tanh', bn=bn)
+                x = self.conv2d(x, channel, 3, 1, bn=bn)
+        decoder_output = self.decoding_layer(x)
         return decoder_input, decoder_output
+
+    def encoding_layer(self, x, latent_dim):
+        return self.dense(x, latent_dim, bn=False, activation='linear')
+
+    def decoding_layer(self, x):
+        return self.conv2d(x, self.input_shape[-1], 1, 1, bn=False, activation='tanh')
 
     def conv2d(self, x, filters, kernel_size, strides, bn=False, activation='relu'):
         x = tf.keras.layers.Conv2D(
@@ -87,10 +93,11 @@ class Model:
             padding='same',
             kernel_size=kernel_size,
             use_bias=not bn,
+            activation='linear' if bn else activation,
             kernel_initializer=self.kernel_initializer())(x)
         if bn:
             x = self.batch_normalization(x)
-        return self.activation(x, activation)
+        return self.activation(x, activation) if bn else x
 
     def conv2d_transpose(self, x, filters, kernel_size, strides, bn=False, activation='relu'):
         x = tf.keras.layers.Conv2DTranspose(
@@ -99,19 +106,21 @@ class Model:
             padding='same',
             kernel_size=kernel_size,
             use_bias=not bn,
+            activation='linear' if bn else activation,
             kernel_initializer=self.kernel_initializer())(x)
         if bn:
             x = self.batch_normalization(x)
-        return self.activation(x, activation)
+        return self.activation(x, activation) if bn else x
 
     def dense(self, x, units, bn=False, activation='relu'):
         x = tf.keras.layers.Dense(
             units=units,
             use_bias=not bn,
+            activation='linear' if bn else activation,
             kernel_initializer=self.kernel_initializer())(x)
         if bn:
             x = self.batch_normalization(x)
-        return self.activation(x, activation)
+        return self.activation(x, activation) if bn else x
 
     def batch_normalization(self, x):
         return tf.keras.layers.BatchNormalization()(x)
@@ -120,11 +129,7 @@ class Model:
         return tf.keras.initializers.glorot_normal()
 
     def activation(self, x, activation):
-        if activation == 'leaky':
-            x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-        else:
-            x = tf.keras.layers.Activation(activation=activation)(x)
-        return x
+        return tf.keras.layers.Activation(activation=activation)(x) if activation != 'linear' else x
 
     def max_pool(self, x):
         return tf.keras.layers.MaxPool2D()(x)
