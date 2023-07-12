@@ -41,78 +41,42 @@ class Model:
         self.encoder = None
         self.latent_rows = input_shape[0] // 32
         self.latent_cols = input_shape[1] // 32
+        self.channels = [32, 64, 128, 256, 512]
 
     def build(self):
         assert self.input_shape[0] % 32 == 0 and self.input_shape[1] % 32 == 0
-        if self.strided_model:
-            encoder_input, encoder_output = self.build_encoder_stride(bn=False)
-            decoder_input, decoder_output = self.build_decoder_stride(bn=False)
-        else:
-            encoder_input, encoder_output = self.build_encoder_sample(bn=False)
-            decoder_input, decoder_output = self.build_decoder_sample(bn=False)
+        encoder_input, encoder_output = self.build_encoder()
+        decoder_input, decoder_output = self.build_decoder()
         self.decoder = tf.keras.models.Model(decoder_input, decoder_output)
         self.encoder = tf.keras.models.Model(encoder_input, encoder_output)
         ae_output = self.decoder(encoder_output)
         self.ae = tf.keras.models.Model(encoder_input, ae_output)
         return self.encoder, self.decoder, self.ae
 
-    def build_encoder_stride(self, bn):
+    def build_encoder(self, bn=False):
         encoder_input = tf.keras.layers.Input(shape=self.input_shape)
         x = encoder_input
-        x = self.conv2d(x,  32, 3, 2, activation='relu', bn=bn)
-        x = self.conv2d(x,  64, 3, 2, activation='relu', bn=bn)
-        x = self.conv2d(x, 128, 3, 2, activation='relu', bn=bn)
-        x = self.conv2d(x, 256, 3, 2, activation='relu', bn=bn)
-        x = self.conv2d(x, 512, 3, 2, activation='relu', bn=bn)
+        for channel in self.channels:
+            if self.strided_model:
+                x = self.conv2d(x, channel, 3, 2, activation='relu', bn=bn)
+            else:
+                x = self.conv2d(x, channel, 3, 1, activation='relu', bn=bn)
+                x = self.max_pool(x)
         x = self.flatten(x)
         encoder_output = self.dense(x, self.latent_dim, activation='linear', bn=bn)
         return encoder_input, encoder_output
 
-    def build_encoder_sample(self, bn):
-        encoder_input = tf.keras.layers.Input(shape=self.input_shape)
-        x = encoder_input
-        x = self.conv2d(x,  32, 3, 1, activation='relu', bn=bn)
-        x = self.max_pool(x)
-        x = self.conv2d(x,  64, 3, 1, activation='relu', bn=bn)
-        x = self.max_pool(x)
-        x = self.conv2d(x, 128, 3, 1, activation='relu', bn=bn)
-        x = self.max_pool(x)
-        x = self.conv2d(x, 256, 3, 1, activation='relu', bn=bn)
-        x = self.max_pool(x)
-        x = self.conv2d(x, 512, 3, 1, activation='relu', bn=bn)
-        x = self.max_pool(x)
-        x = self.flatten(x)
-        encoder_output = self.dense(x, self.latent_dim, activation='linear', bn=bn)
-        return encoder_input, encoder_output
-
-    def build_decoder_stride(self, bn):
+    def build_decoder(self, bn=False):
         decoder_input = tf.keras.layers.Input(shape=(self.latent_dim,))
         x = decoder_input
-        x = self.dense(x, self.latent_rows * self.latent_cols * 512, activation='relu', bn=bn)
-        x = self.reshape(x, (self.latent_rows, self.latent_cols, 512))
-        x = self.conv2d_transpose(x, 512, 3, 2, activation='relu', bn=bn)
-        x = self.conv2d_transpose(x, 256, 3, 2, activation='relu', bn=bn)
-        x = self.conv2d_transpose(x, 128, 3, 2, activation='relu', bn=bn)
-        x = self.conv2d_transpose(x,  64, 3, 2, activation='relu', bn=bn)
-        x = self.conv2d_transpose(x,  32, 3, 2, activation='relu', bn=bn)
-        decoder_output = self.conv2d_transpose(x, self.input_shape[-1], 1, 1, activation='tanh', bn=bn)
-        return decoder_input, decoder_output
-
-    def build_decoder_sample(self, bn):
-        decoder_input = tf.keras.layers.Input(shape=(self.latent_dim,))
-        x = decoder_input
-        x = self.dense(x, self.latent_rows * self.latent_cols * 512, activation='relu', bn=bn)
-        x = self.reshape(x, (self.latent_rows, self.latent_cols, 512))
-        x = self.upsampling(x)
-        x = self.conv2d(x, 512, 3, 1, activation='relu', bn=bn)
-        x = self.upsampling(x)
-        x = self.conv2d(x, 256, 3, 1, activation='relu', bn=bn)
-        x = self.upsampling(x)
-        x = self.conv2d(x, 128, 3, 1, activation='relu', bn=bn)
-        x = self.upsampling(x)
-        x = self.conv2d(x,  64, 3, 1, activation='relu', bn=bn)
-        x = self.upsampling(x)
-        x = self.conv2d(x,  32, 3, 1, activation='relu', bn=bn)
+        x = self.dense(x, self.latent_rows * self.latent_cols * self.channels[-1], activation='relu', bn=bn)
+        x = self.reshape(x, (self.latent_rows, self.latent_cols, self.channels[-1]))
+        for channel in reversed(self.channels):
+            if self.strided_model:
+                x = self.conv2d_transpose(x, channel, 3, 2, activation='relu', bn=bn)
+            else:
+                x = self.upsampling(x)
+                x = self.conv2d(x, channel, 3, 1, activation='relu', bn=bn)
         decoder_output = self.conv2d_transpose(x, self.input_shape[-1], 1, 1, activation='tanh', bn=bn)
         return decoder_input, decoder_output
 
@@ -153,7 +117,7 @@ class Model:
         return tf.keras.layers.BatchNormalization()(x)
 
     def kernel_initializer(self):
-        return tf.keras.initializers.he_normal()
+        return tf.keras.initializers.glorot_normal()
 
     def activation(self, x, activation):
         if activation == 'leaky':
