@@ -48,6 +48,7 @@ class AutoEncoder:
                  iterations,
                  save_interval,
                  strided_model,
+                 denoising_model,
                  training_view,
                  checkpoint_path='checkpoint'):
         assert input_shape[2] in [1, 3]
@@ -60,6 +61,7 @@ class AutoEncoder:
         self.save_interval = save_interval
         self.iterations = iterations
         self.training_view = training_view
+        self.denoising_model = denoising_model
         self.checkpoint_path = checkpoint_path
         self.live_view_previous_time = time()
 
@@ -79,7 +81,7 @@ class AutoEncoder:
             print(f'image count({len(validation_image_path)}) is lower than batch size({self.batch_size})')
             exit(0)
 
-        self.model = Model(input_shape=input_shape, latent_dim=self.latent_dim, strided_model=strided_model)
+        self.model = Model(input_shape=input_shape, latent_dim=self.latent_dim, strided_model=strided_model, denoising_model=denoising_model)
         self.encoder, self.decoder, self.ae = self.model.build()
         self.train_data_generator = DataGenerator(
             image_paths=self.train_image_paths,
@@ -109,7 +111,7 @@ class AutoEncoder:
         print('start training')
         iteration_count = 0
         os.makedirs(self.checkpoint_path, exist_ok=True)
-        optimizer = tf.keras.optimizers.Adam(lr=self.lr)
+        optimizer = tf.keras.optimizers.RMSprop(lr=self.lr)
         lr_scheduler = LRScheduler(lr=self.lr, iterations=self.iterations, warm_up=self.warm_up, policy='step')
         while True:
             for x in self.train_data_generator:
@@ -146,7 +148,11 @@ class AutoEncoder:
             img = self.resize(img, (input_shape[1], input_shape[0]))
             x = DataGenerator.normalize(img).reshape((1,) + input_shape)
             decoded_image = DataGenerator.denormalize(self.graph_forward(self.ae, x))
-            random_image = DataGenerator.denormalize(self.graph_forward(self.decoder, np.random.normal(loc=0.0, scale=1.0, size=self.latent_dim).reshape((1, self.latent_dim))))
-            cv2.imshow('training view', np.concatenate((img.reshape(input_shape), decoded_image.reshape(input_shape), random_image.reshape(input_shape)), axis=1))
+            if self.denoising_model:
+                view_img = np.concatenate((img.reshape(input_shape), decoded_image.reshape(input_shape)), axis=1)
+            else:
+                random_image = DataGenerator.denormalize(self.graph_forward(self.decoder, np.random.normal(loc=0.0, scale=1.0, size=self.latent_dim).reshape((1, self.latent_dim))))
+                view_img = np.concatenate((img.reshape(input_shape), decoded_image.reshape(input_shape), random_image.reshape(input_shape)), axis=1)
+            cv2.imshow('training view', view_img)
             cv2.waitKey(1)
 

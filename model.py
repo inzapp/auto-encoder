@@ -32,16 +32,21 @@ os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
 
 class Model:
-    def __init__(self, input_shape, latent_dim, strided_model):
+    def __init__(self, input_shape, latent_dim, strided_model, denoising_model):
         self.input_shape = input_shape
         self.latent_dim = latent_dim
         self.strided_model = strided_model
+        self.denoising_model = denoising_model
         self.ae = None
         self.decoder = None
         self.encoder = None
-        self.latent_rows = input_shape[0] // 32
-        self.latent_cols = input_shape[1] // 32
-        self.channels = [32, 64, 128, 256, 512]
+        if self.denoising_model:
+            self.channels = [16, 32, 64]
+        else:
+            self.channels = [16, 32, 64, 128, 256, 512]
+        scale = pow(2, len(self.channels) - 1)
+        self.latent_rows = input_shape[0] // scale
+        self.latent_cols = input_shape[1] // scale
 
     def build(self):
         assert self.input_shape[0] % 32 == 0 and self.input_shape[1] % 32 == 0
@@ -56,22 +61,26 @@ class Model:
     def build_encoder(self, bn=False):
         encoder_input = tf.keras.layers.Input(shape=self.input_shape)
         x = encoder_input
-        for channel in self.channels:
-            if self.strided_model:
-                x = self.conv2d(x, channel, 3, 2, bn=bn)
-            else:
+        for i, channel in enumerate(self.channels):
+            if i == len(self.channels) - 1:
                 x = self.conv2d(x, channel, 3, 1, bn=bn)
-                x = self.max_pool(x)
-        x = self.flatten(x)
-        encoder_output = self.encoding_layer(x, self.latent_dim)
+            else:
+                if self.strided_model:
+                    x = self.conv2d(x, channel, 3, 2, bn=bn)
+                else:
+                    x = self.conv2d(x, channel, 3, 1, bn=bn)
+                    x = self.max_pool(x)
+        encoder_output = x if self.denoising_model else self.encoding_layer(x, self.latent_dim)
         return encoder_input, encoder_output
 
     def build_decoder(self, bn=False):
-        decoder_input = tf.keras.layers.Input(shape=(self.latent_dim,))
+        decoder_input_shape = (self.latent_rows, self.latent_cols, self.channels[-1]) if self.denoising_model else (self.latent_dim,)
+        decoder_input = tf.keras.layers.Input(shape=decoder_input_shape)
         x = decoder_input
-        x = self.dense(x, self.latent_rows * self.latent_cols * self.channels[-1], bn=bn)
-        x = self.reshape(x, (self.latent_rows, self.latent_cols, self.channels[-1]))
-        for channel in reversed(self.channels):
+        if not self.denoising_model:
+            x = self.dense(x, self.latent_rows * self.latent_cols * self.channels[-1], bn=bn)
+            x = self.reshape(x, (self.latent_rows, self.latent_cols, self.channels[-1]))
+        for channel in list(reversed(self.channels))[1:]:
             if self.strided_model:
                 x = self.conv2d_transpose(x, channel, 3, 2, bn=bn)
             else:
@@ -81,7 +90,7 @@ class Model:
         return decoder_input, decoder_output
 
     def encoding_layer(self, x, latent_dim):
-        return self.dense(x, latent_dim, bn=False, activation='linear')
+        return self.dense(self.flatten(x), latent_dim, bn=False, activation='linear')
 
     def decoding_layer(self, x):
         return self.conv2d(x, self.input_shape[-1], 1, 1, bn=False, activation='sigmoid')
