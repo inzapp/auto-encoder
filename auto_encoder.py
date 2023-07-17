@@ -51,6 +51,7 @@ class AutoEncoder:
                  denoising_model,
                  training_view,
                  checkpoint_path='checkpoint'):
+        assert input_shape[0] % 32 == 0 and input_shape[1] % 32 == 0
         assert input_shape[2] in [1, 3]
         assert save_interval >= 1000
         self.input_shape = input_shape
