@@ -86,7 +86,8 @@ class AutoEncoder:
         self.train_data_generator = DataGenerator(
             image_paths=self.train_image_paths,
             input_shape=input_shape,
-            batch_size=batch_size)
+            batch_size=batch_size,
+            denoising_model=denoising_model)
 
     def is_valid_path(self, path):
         return os.path.exists(path) and os.path.isdir(path)
@@ -95,11 +96,11 @@ class AutoEncoder:
         return glob(f'{image_path}/**/*.jpg', recursive=True)
 
     @tf.function
-    def compute_gradient(self, encoder, decoder, optimizer, x):
+    def compute_gradient(self, encoder, decoder, optimizer, x, y_true):
         with tf.GradientTape() as tape:
             z = encoder(x, training=True)
             y_pred = decoder(z, training=True)
-            loss = tf.reduce_mean(tf.square(x - y_pred))
+            loss = tf.reduce_mean(tf.square(y_true - y_pred))
         trainable_variables = encoder.trainable_variables + decoder.trainable_variables
         gradients = tape.gradient(loss, trainable_variables)
         optimizer.apply_gradients(zip(gradients, trainable_variables))
@@ -114,9 +115,9 @@ class AutoEncoder:
         optimizer = tf.keras.optimizers.RMSprop(lr=self.lr)
         lr_scheduler = LRScheduler(lr=self.lr, iterations=self.iterations, warm_up=self.warm_up, policy='step')
         while True:
-            for x in self.train_data_generator:
+            for batch_x, batch_y in self.train_data_generator:
                 lr_scheduler.update(optimizer, iteration_count)
-                loss = self.compute_gradient(self.encoder, self.decoder, optimizer, x)
+                loss = self.compute_gradient(self.encoder, self.decoder, optimizer, batch_x, batch_y)
                 iteration_count += 1
                 print(f'\r[iteration_count : {iteration_count:6d}] loss : {loss:>8.4f}', end='')
                 if self.training_view:
@@ -143,9 +144,10 @@ class AutoEncoder:
         if cur_time - self.live_view_previous_time > 0.5:
             self.live_view_previous_time = cur_time
             img_path = np.random.choice(self.validation_image_paths)
+            img, img_noise = self.train_data_generator.load_image(img_path)
+            if self.denoising_model:
+                img = img_noise
             input_shape = self.ae.input_shape[1:]
-            img = cv2.imdecode(np.fromfile(img_path, dtype=np.uint8), cv2.IMREAD_GRAYSCALE if input_shape[-1] == 1 else cv2.IMREAD_COLOR)
-            img = self.resize(img, (input_shape[1], input_shape[0]))
             x = DataGenerator.normalize(img).reshape((1,) + input_shape)
             decoded_image = DataGenerator.denormalize(self.graph_forward(self.ae, x))
             if self.denoising_model:
