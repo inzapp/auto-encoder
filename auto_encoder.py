@@ -51,7 +51,6 @@ class AutoEncoder:
                  denoising_model,
                  training_view,
                  checkpoint_path='checkpoint'):
-        assert input_shape[0] % 32 == 0 and input_shape[1] % 32 == 0
         assert input_shape[2] in [1, 3]
         assert save_interval >= 1000
         self.input_shape = input_shape
@@ -83,7 +82,7 @@ class AutoEncoder:
             exit(0)
 
         self.model = Model(input_shape=input_shape, latent_dim=self.latent_dim, strided_model=strided_model, denoising_model=denoising_model)
-        self.encoder, self.decoder, self.ae = self.model.build()
+        self.encoder, self.ae = self.model.build()
         self.train_data_generator = DataGenerator(
             image_paths=self.train_image_paths,
             input_shape=input_shape,
@@ -97,14 +96,12 @@ class AutoEncoder:
         return glob(f'{image_path}/**/*.jpg', recursive=True)
 
     @tf.function
-    def compute_gradient(self, encoder, decoder, optimizer, x, y_true):
+    def compute_gradient(self, model, optimizer, x, y_true):
         with tf.GradientTape() as tape:
-            z = encoder(x, training=True)
-            y_pred = decoder(z, training=True)
+            y_pred = model(x, training=True)
             loss = tf.reduce_mean(tf.square(y_true - y_pred))
-        trainable_variables = encoder.trainable_variables + decoder.trainable_variables
-        gradients = tape.gradient(loss, trainable_variables)
-        optimizer.apply_gradients(zip(gradients, trainable_variables))
+        gradients = tape.gradient(loss, model.trainable_variables)
+        optimizer.apply_gradients(zip(gradients, model.trainable_variables))
         return loss
 
     def fit(self):
@@ -118,14 +115,16 @@ class AutoEncoder:
         while True:
             for batch_x, batch_y in self.train_data_generator:
                 lr_scheduler.update(optimizer, iteration_count)
-                loss = self.compute_gradient(self.encoder, self.decoder, optimizer, batch_x, batch_y)
+                loss = self.compute_gradient(self.ae, optimizer, batch_x, batch_y)
                 iteration_count += 1
                 print(f'\r[iteration_count : {iteration_count:6d}] loss : {loss:>8.4f}', end='')
                 if self.training_view:
                     self.training_view_function()
                 if iteration_count % self.save_interval == 0:
-                    self.encoder.save(f'{self.checkpoint_path}/encoder_{iteration_count}_iter.h5', include_optimizer=False)
-                    self.decoder.save(f'{self.checkpoint_path}/decoder_{iteration_count}_iter.h5', include_optimizer=False)
+                    if self.denoising_model:
+                        self.ae.save(f'{self.checkpoint_path}/denoising_ae_{iteration_count}_iter.h5', include_optimizer=False)
+                    else:
+                        self.encoder.save(f'{self.checkpoint_path}/encoder_{iteration_count}_iter.h5', include_optimizer=False)
                 if iteration_count == self.iterations:
                     print('\ntrain end successfully')
                     return
@@ -151,11 +150,7 @@ class AutoEncoder:
             input_shape = self.ae.input_shape[1:]
             x = DataGenerator.normalize(img).reshape((1,) + input_shape)
             decoded_image = DataGenerator.denormalize(self.graph_forward(self.ae, x))
-            if self.denoising_model:
-                view_img = np.concatenate((img.reshape(input_shape), decoded_image.reshape(input_shape)), axis=1)
-            else:
-                random_image = DataGenerator.denormalize(self.graph_forward(self.decoder, np.random.normal(loc=0.0, scale=1.0, size=self.latent_dim).reshape((1, self.latent_dim))))
-                view_img = np.concatenate((img.reshape(input_shape), decoded_image.reshape(input_shape), random_image.reshape(input_shape)), axis=1)
+            view_img = np.concatenate((img.reshape(input_shape), decoded_image.reshape(input_shape)), axis=1)
             cv2.imshow('training view', view_img)
             cv2.waitKey(1)
 

@@ -38,7 +38,6 @@ class Model:
         self.strided_model = strided_model
         self.denoising_model = denoising_model
         self.ae = None
-        self.decoder = None
         self.encoder = None
         if self.denoising_model:
             self.channels = [16, 32, 64]
@@ -48,18 +47,9 @@ class Model:
         self.latent_rows = input_shape[0] // scale
         self.latent_cols = input_shape[1] // scale
 
-    def build(self):
+    def build(self, bn=False):
         assert self.input_shape[0] % 32 == 0 and self.input_shape[1] % 32 == 0
-        encoder_input, encoder_output = self.build_encoder()
-        decoder_input, decoder_output = self.build_decoder()
-        self.decoder = tf.keras.models.Model(decoder_input, decoder_output)
-        self.encoder = tf.keras.models.Model(encoder_input, encoder_output)
-        ae_output = self.decoder(encoder_output)
-        self.ae = tf.keras.models.Model(encoder_input, ae_output)
-        return self.encoder, self.decoder, self.ae
-
-    def build_encoder(self, bn=False):
-        encoder_input = tf.keras.layers.Input(shape=self.input_shape)
+        encoder_input = tf.keras.layers.Input(shape=self.input_shape, name='encoder_input')
         x = encoder_input
         for i, channel in enumerate(self.channels):
             if i == len(self.channels) - 1:
@@ -70,13 +60,9 @@ class Model:
                 else:
                     x = self.conv2d(x, channel, 3, 1, bn=bn)
                     x = self.max_pool(x)
-        encoder_output = x if self.denoising_model else self.encoding_layer(x, self.latent_dim)
-        return encoder_input, encoder_output
+        x = x if self.denoising_model else self.encoding_layer(x, self.latent_dim)
+        encoder_output = x
 
-    def build_decoder(self, bn=False):
-        decoder_input_shape = (self.latent_rows, self.latent_cols, self.channels[-1]) if self.denoising_model else (self.latent_dim,)
-        decoder_input = tf.keras.layers.Input(shape=decoder_input_shape)
-        x = decoder_input
         if not self.denoising_model:
             x = self.dense(x, self.latent_rows * self.latent_cols * self.channels[-1], bn=bn)
             x = self.reshape(x, (self.latent_rows, self.latent_cols, self.channels[-1]))
@@ -86,16 +72,19 @@ class Model:
             else:
                 x = self.upsampling(x)
                 x = self.conv2d(x, channel, 3, 1, bn=bn)
-        decoder_output = self.decoding_layer(x)
-        return decoder_input, decoder_output
+        x = self.decoding_layer(x)
+        decoder_output = x
+        self.encoder = tf.keras.models.Model(encoder_input, encoder_output)
+        self.ae = tf.keras.models.Model(encoder_input, decoder_output)
+        return self.encoder, self.ae
 
     def encoding_layer(self, x, latent_dim):
-        return self.dense(self.flatten(x), latent_dim, bn=False, activation='linear')
+        return self.dense(self.flatten(x), latent_dim, bn=False, activation='linear', name='encoder_output')
 
     def decoding_layer(self, x):
-        return self.conv2d(x, self.input_shape[-1], 1, 1, bn=False, activation='sigmoid')
+        return self.conv2d(x, self.input_shape[-1], 1, 1, bn=False, activation='sigmoid', name='decoder_output')
 
-    def conv2d(self, x, filters, kernel_size, strides, bn=False, activation='relu'):
+    def conv2d(self, x, filters, kernel_size, strides, bn=False, activation='relu', name=None):
         x = tf.keras.layers.Conv2D(
             strides=strides,
             filters=filters,
@@ -103,7 +92,8 @@ class Model:
             kernel_size=kernel_size,
             use_bias=not bn,
             activation='linear' if bn else activation,
-            kernel_initializer=self.kernel_initializer())(x)
+            kernel_initializer=self.kernel_initializer(),
+            name=name)(x)
         if bn:
             x = self.batch_normalization(x)
         return self.activation(x, activation) if bn else x
@@ -121,12 +111,13 @@ class Model:
             x = self.batch_normalization(x)
         return self.activation(x, activation) if bn else x
 
-    def dense(self, x, units, bn=False, activation='relu'):
+    def dense(self, x, units, bn=False, activation='relu', name=None):
         x = tf.keras.layers.Dense(
             units=units,
             use_bias=not bn,
             activation='linear' if bn else activation,
-            kernel_initializer=self.kernel_initializer())(x)
+            kernel_initializer=self.kernel_initializer(),
+            name=name)(x)
         if bn:
             x = self.batch_normalization(x)
         return self.activation(x, activation) if bn else x
@@ -156,7 +147,8 @@ class Model:
         return tf.keras.layers.Flatten()(x)
 
     def summary(self):
-        self.decoder.summary()
-        print()
+        if not self.denoising_model:
+            self.encoder.summary()
+            print()
         self.ae.summary()
 
