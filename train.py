@@ -33,11 +33,12 @@ if __name__ == '__main__':
         validation_image_path=r'/train_data/imagenet/validation',
         lr=0.001,
         warm_up=0.5,
-        batch_size=32,
+        batch_size=8,
         latent_dim=32,
         iterations=100000,
         save_interval=5000,
         denoising_model=False,
-        strided_model=True,
-        training_view=True).fit()
+        strided_model=False,
+        training_view=False,
+        unet=False).fit()
 
