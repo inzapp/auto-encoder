@@ -32,12 +32,10 @@ os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
 
 class Model:
-    def __init__(self, input_shape, latent_dim, strided_model, denoising_model, unet):
+    def __init__(self, input_shape, latent_dim, denoising_model):
         self.input_shape = input_shape
         self.latent_dim = latent_dim
-        self.strided_model = strided_model
         self.denoising_model = denoising_model
-        self.unet = unet
         self.ae = None
         self.encoder = None
         if self.denoising_model:
@@ -50,13 +48,6 @@ class Model:
 
     def build(self, bn=False):
         assert self.input_shape[0] % 32 == 0 and self.input_shape[1] % 32 == 0
-        if self.unet:
-            if not self.denoising_model:
-                print('UNet can only be used with denoising model')
-                exit(0)
-            if self.strided_model:
-                print('UNet can only be used with not strided model')
-                exit(0)
         encoder_input = tf.keras.layers.Input(shape=self.input_shape, name='encoder_input')
         x = encoder_input
         features = []
@@ -64,29 +55,27 @@ class Model:
             if i == len(self.channels) - 1:
                 x = self.conv2d(x, channel, 3, 1, bn=bn)
             else:
-                if self.strided_model:
-                    x = self.conv2d(x, channel, 3, 2, bn=bn)
-                else:
+                if self.denoising_model:
                     x = self.conv2d(x, channel, 3, 1, bn=bn)
-                    if self.unet:
-                        features.append(x)
+                    features.append(x)
                     x = self.max_pool(x)
+                else:
+                    x = self.conv2d(x, channel, 3, 2, bn=bn)
         x = x if self.denoising_model else self.encoding_layer(x, self.latent_dim)
         encoder_output = x
 
-        if self.unet:
+        if self.denoising_model:
             features = list(reversed(features))
         if not self.denoising_model:
             x = self.dense(x, self.latent_rows * self.latent_cols * self.channels[-1], bn=bn)
             x = self.reshape(x, (self.latent_rows, self.latent_cols, self.channels[-1]))
         for i, channel in enumerate(list(reversed(self.channels))[1:]):
-            if self.strided_model:
-                x = self.conv2d_transpose(x, channel, 3, 2, bn=bn)
-            else:
+            if self.denoising_model:
                 x = self.upsampling(x)
                 x = self.conv2d(x, channel, 3, 1, bn=bn)
-                if self.unet:
-                    x = self.add([x, features[i]])
+                x = self.add([x, features[i]])
+            else:
+                x = self.conv2d_transpose(x, channel, 3, 2, bn=bn)
         x = self.decoding_layer(x)
         decoder_output = x
         self.encoder = tf.keras.models.Model(encoder_input, encoder_output)

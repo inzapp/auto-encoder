@@ -47,10 +47,8 @@ class AutoEncoder:
                  latent_dim,
                  iterations,
                  save_interval,
-                 strided_model,
                  denoising_model,
                  training_view,
-                 unet,
                  checkpoint_path='checkpoint'):
         assert input_shape[2] in [1, 3]
         assert save_interval >= 1000
@@ -64,9 +62,7 @@ class AutoEncoder:
         self.save_interval = save_interval
         self.iterations = iterations
         self.training_view = training_view
-        self.strided_model = strided_model
         self.denoising_model = denoising_model
-        self.unet = unet
         self.checkpoint_path = checkpoint_path
         self.live_view_previous_time = time()
 
@@ -100,9 +96,7 @@ class AutoEncoder:
             self.ae, self.encoder = Model(
                 input_shape=self.input_shape,
                 latent_dim=self.latent_dim,
-                strided_model=self.strided_model,
-                denoising_model=self.denoising_model,
-                unet=self.unet).build()
+                denoising_model=self.denoising_model).build()
         self.data_generator = DataGenerator(
             image_paths=self.train_image_paths,
             input_shape=self.input_shape,
@@ -213,6 +207,7 @@ class AutoEncoder:
                     if self.denoising_model:
                         self.ae.save(f'{self.checkpoint_path}/denoising_ae_{iteration_count}_iter.h5', include_optimizer=False)
                     else:
+                        self.ae.save(f'{self.checkpoint_path}/ae_{iteration_count}_iter.h5', include_optimizer=False)
                         self.encoder.save(f'{self.checkpoint_path}/encoder_{iteration_count}_iter.h5', include_optimizer=False)
                 if iteration_count == self.iterations:
                     print('\ntrain end successfully')

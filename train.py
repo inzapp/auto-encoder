@@ -41,9 +41,7 @@ if __name__ == '__main__':
         iterations=100000,
         save_interval=5000,
         denoising_model=False,
-        strided_model=False,
-        training_view=False,
-        unet=False)
+        training_view=False)
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default='', help='pretrained model path')
