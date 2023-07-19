@@ -24,10 +24,13 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
+import argparse
+
 from auto_encoder import AutoEncoder
 
+
 if __name__ == '__main__':
-    AutoEncoder(
+    auto_encoder = AutoEncoder(
         input_shape=(32, 32, 1),
         train_image_path=r'/train_data/imagenet/train',
         validation_image_path=r'/train_data/imagenet/validation',
@@ -40,5 +43,16 @@ if __name__ == '__main__':
         denoising_model=False,
         strided_model=False,
         training_view=False,
-        unet=False).fit()
+        unet=False)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model', type=str, default='', help='pretrained model path')
+    parser.add_argument('--predict', action='store_true', help='evaluate using train or validation dataset')
+    parser.add_argument('--dataset', type=str, default='validation', help='dataset for evaluate, train or validation available')
+    parser.add_argument('--path', type=str, default='', help='image or video path for evaluate')
+    args = parser.parse_args()
+    if args.predict:
+        auto_encoder.predict_images(model_path=args.model, image_path=args.path, dataset=args.dataset)
+    else:
+        auto_encoder.train(model_path=args.model)
 

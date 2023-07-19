@@ -91,7 +91,7 @@ class Model:
         decoder_output = x
         self.encoder = tf.keras.models.Model(encoder_input, encoder_output)
         self.ae = tf.keras.models.Model(encoder_input, decoder_output)
-        return self.encoder, self.ae
+        return self.ae, self.encoder
 
     def encoding_layer(self, x, latent_dim):
         return self.dense(self.flatten(x), latent_dim, bn=False, activation='linear', name='encoder_output')
