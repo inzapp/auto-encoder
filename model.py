@@ -48,9 +48,9 @@ class Model:
 
     def build(self, bn=False):
         if self.denoising_model:
-            assert self.input_shape[0] % 8 == 0 and self.input_shape[1] % 8 == 0 'input_rows, input_cols must be multiple of 8 when training denoising model'
+            assert self.input_shape[0] % 4 == 0 and self.input_shape[1] % 4 == 0, 'input_rows, input_cols must be multiple of 4 when training denoising model'
         else:
-            assert self.input_shape[0] % 32 == 0 and self.input_shape[1] % 32 == 0 'input_rows, input_cols must be multiple of 32'
+            assert self.input_shape[0] % 32 == 0 and self.input_shape[1] % 32 == 0, 'input_rows, input_cols must be multiple of 32'
         encoder_input = tf.keras.layers.Input(shape=self.input_shape, name='encoder_input')
         x = encoder_input
         features = []
