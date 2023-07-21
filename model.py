@@ -39,7 +39,7 @@ class Model:
         self.ae = None
         self.encoder = None
         if self.denoising_model:
-            self.channels = [16, 32, 64]
+            self.channels = [4, 8, 16]
         else:
             self.channels = [16, 32, 64, 128, 256, 512]
         scale = pow(2, len(self.channels) - 1)
