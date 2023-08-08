@@ -131,6 +131,17 @@ class DataGenerator:
         new_yuv[:, :, 1] = new_uv_zero_padded
         return new_yuv
 
+    def convert_yuv3ch2bgr(self, yuv, yuv_type):
+        h, w, c = yuv.shape
+        y = yuv[:, :, 0]
+        uv_or_vu = yuv[:, :, 1][0:h//2, 0:w]
+        yuv = np.vstack((y, uv_or_vu))
+        if yuv_type == 'nv12':
+            bgr = np.asarray(cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV12))
+        else:
+            bgr = np.asarray(cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV21))
+        return bgr
+
     def load_image(self, image_path):
         data = np.fromfile(image_path, dtype=np.uint8)
         if self.input_type == 'gray':

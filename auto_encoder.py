@@ -162,8 +162,15 @@ class AutoEncoder:
         return loss
 
     def predict(self, img, input_image_concat=True):
+        if self.input_type in ['nv12', 'nv21']:
+            img = self.data_generator.convert_yuv3ch2bgr(img, self.input_type)
         x = DataGenerator.normalize(img).reshape((1,) + self.input_shape)
-        decoded_image = DataGenerator.denormalize(self.graph_forward(self.ae, x))
+
+        output = np.array(self.graph_forward(self.ae, x)).reshape(self.input_shape)
+        decoded_image = DataGenerator.denormalize(output)
+        if self.input_type in ['nv12', 'nv21']:
+            decoded_image = self.data_generator.convert_yuv3ch2bgr(decoded_image, self.input_type)
+
         if input_image_concat:
             decoded_image = np.concatenate((img.reshape(self.input_shape), decoded_image.reshape(self.input_shape)), axis=1)
         return decoded_image
