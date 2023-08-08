@@ -31,7 +31,9 @@ from auto_encoder import AutoEncoder
 
 if __name__ == '__main__':
     auto_encoder = AutoEncoder(
-        input_shape=(32, 32, 1),
+        input_rows=32,
+        input_cols=32,
+        input_type='gray',
         train_image_path=r'/train_data/imagenet/train',
         validation_image_path=r'/train_data/imagenet/validation',
         lr=0.001,

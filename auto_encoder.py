@@ -41,7 +41,9 @@ class AutoEncoder:
     def __init__(self,
                  train_image_path,
                  validation_image_path,
-                 input_shape,
+                 input_rows,
+                 input_cols,
+                 input_type,
                  lr,
                  warm_up,
                  batch_size,
@@ -51,11 +53,11 @@ class AutoEncoder:
                  denoising_model,
                  training_view,
                  checkpoint_path='checkpoint'):
-        assert input_shape[2] in [1, 3]
         assert save_interval >= 1000
         self.train_image_path = train_image_path
         self.validation_image_path = validation_image_path
-        self.input_shape = input_shape
+        self.input_shape = (input_rows, input_cols, 1 if input_type == 'gray' else 3)
+        self.input_type = input_type
         self.lr = lr
         self.warm_up = warm_up
         self.batch_size = batch_size
@@ -101,6 +103,7 @@ class AutoEncoder:
         self.data_generator = DataGenerator(
             image_paths=self.train_image_paths,
             input_shape=self.input_shape,
+            input_type=self.input_type,
             batch_size=self.batch_size,
             denoising_model=self.denoising_model)
 
@@ -153,7 +156,7 @@ class AutoEncoder:
                 yuv_true = tf.concat([yuv_y_true, yuv_u_true, yuv_v_true], axis=-1)
                 yuv_pred = tf.concat([yuv_y_pred, yuv_u_pred, yuv_v_pred], axis=-1)
                 ace = AdaptiveCrossentropy()(yuv_true, yuv_pred)
-            loss = tf.reduce_mean(loss)
+            loss = tf.reduce_mean(ace)
         gradients = tape.gradient(loss, model.trainable_variables)
         optimizer.apply_gradients(zip(gradients, model.trainable_variables))
         return loss

@@ -35,11 +35,14 @@ class DataGenerator:
     def __init__(self,
                  image_paths,
                  input_shape,
+                 input_type,
                  batch_size,
                  denoising_model,
                  dtype='float32'):
+        assert input_type in ['gray', 'rgb', 'nv12', 'nv21']
         self.image_paths = image_paths
         self.input_shape = input_shape
+        self.input_type = input_type
         self.batch_size = batch_size
         self.denoising_model = denoising_model
         self.dtype = dtype
@@ -105,19 +108,64 @@ class DataGenerator:
             interpolation = cv2.INTER_AREA
         return cv2.resize(img, size, interpolation=interpolation)
 
+    def convert_bgr2yuv3ch(self, img, yuv_type):
+        assert yuv_type in ['nv12', 'nv21']
+        h, w, c = img.shape
+        new_img = np.zeros(shape=img.shape, dtype=np.uint8)
+        yuv = cv2.cvtColor(img, cv2.COLOR_BGR2YUV_YV12)
+        y = yuv[:h]
+        uv = yuv[h:]
+        uvf = uv.flatten()
+        v = uvf[:int(uvf.shape[0] / 2)].reshape(uv.shape[0], -1)
+        u = uvf[int(uvf.shape[0] / 2):].reshape(uv.shape[0], -1)
+        new_uv = np.zeros(uv.shape)
+        if yuv_type == 'nv12':
+            new_uv[:,::2] = u
+            new_uv[:,1::2] = v
+        elif yuv_type == 'nv21':
+            new_uv[:,::2] = v
+            new_uv[:,1::2] = u
+        new_uv_zero_padded = np.vstack((new_uv, np.zeros(shape=new_uv.shape, dtype=np.uint8)))
+        new_yuv = np.zeros(shape=img.shape, dtype=np.uint8)
+        new_yuv[:, :, 0] = y
+        new_yuv[:, :, 1] = new_uv_zero_padded
+        return new_yuv
+
     def load_image(self, image_path):
-        if self.denoising_model or self.input_shape[-1] == 3:
-            img = cv2.imdecode(np.fromfile(image_path, dtype=np.uint8), cv2.IMREAD_COLOR)  # ISONoise need rgb image
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        data = np.fromfile(image_path, dtype=np.uint8)
+        if self.input_type == 'gray':
+            img = cv2.imdecode(data, cv2.IMREAD_GRAYSCALE)
         else:
-            img = cv2.imdecode(np.fromfile(image_path, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+            img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+
         img = self.resize(img, (self.input_shape[1], self.input_shape[0]))
-        img = self.transform(image=img)['image']
-        img_noise = None
+        if self.input_type == 'rgb':
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        elif self.input_type in ['nv12', 'nv21']:
+            img = self.convert_bgr2yuv3ch(img, self.input_type)
+
+        img_noise = img
         if self.denoising_model:
-            img_noise = self.transform_noise(image=img)['image']
-            if self.input_shape[-1] == 1:
-                img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-                img_noise = cv2.cvtColor(img_noise, cv2.COLOR_RGB2GRAY)
+            range_min = np.random.uniform(0.0, 100.0)
+            range_max = np.random.uniform(0.0, 100.0)
+            img_noise = np.asarray(img).astype('float32')
+            img_noise += np.random.uniform(-range_min, range_max, size=img.shape)
+            img_noise = np.clip(img_noise, 0.0, 255.0).astype('uint8')
         return img, img_noise
+
+    # def load_image(self, image_path):
+    #     if self.denoising_model or self.input_shape[-1] == 3:
+    #         img = cv2.imdecode(np.fromfile(image_path, dtype=np.uint8), cv2.IMREAD_COLOR)  # ISONoise need rgb image
+    #         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    #     else:
+    #         img = cv2.imdecode(np.fromfile(image_path, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    #     img = self.resize(img, (self.input_shape[1], self.input_shape[0]))
+    #     img = self.transform(image=img)['image']
+    #     img_noise = None
+    #     if self.denoising_model:
+    #         img_noise = self.transform_noise(image=img)['image']
+    #         if self.input_shape[-1] == 1:
+    #             img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    #             img_noise = cv2.cvtColor(img_noise, cv2.COLOR_RGB2GRAY)
+    #     return img, img_noise
 
