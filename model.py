@@ -48,9 +48,36 @@ class Model:
 
     def build(self, bn=False):
         if self.denoising_model:
-            assert self.input_shape[0] % 4 == 0 and self.input_shape[1] % 4 == 0, 'input_rows, input_cols must be multiple of 4 when training denoising model'
+            return self.build_denoising_model(bn=bn)
         else:
-            assert self.input_shape[0] % 32 == 0 and self.input_shape[1] % 32 == 0, 'input_rows, input_cols must be multiple of 32'
+            return self.build_model(bn=bn)
+
+    def build_denoising_model(self, bn):
+        assert self.input_shape[0] % 4 == 0 and self.input_shape[1] % 4 == 0, 'input_rows, input_cols must be multiple of 4 when training denoising model'
+        encoder_input = tf.keras.layers.Input(shape=self.input_shape, name='encoder_input')
+        x = encoder_input
+        features = []
+        for i, channel in enumerate(self.channels):
+            x = self.conv2d(x, channel, 3, 1, bn=bn)
+            if i == len(self.channels) - 1:
+                break
+            features.append(x)
+            x = self.conv2d(x, channel, 3, 2, bn=bn)
+
+        encoder_output = x
+        features = list(reversed(features))
+        for i, channel in enumerate(list(reversed(self.channels))[1:]):
+            x = self.conv2d_transpose(x, channel, 3, 2, bn=bn)
+            x = self.add([x, features[i]])
+            if i == 0:
+                x = self.conv2d(x, channel, 3, 1, bn=bn)
+        decoder_output = self.decoding_layer(x)
+        self.encoder = tf.keras.models.Model(encoder_input, encoder_output)
+        self.ae = tf.keras.models.Model(encoder_input, decoder_output)
+        return self.ae, self.encoder
+
+    def build_model(self, bn):
+        assert self.input_shape[0] % 32 == 0 and self.input_shape[1] % 32 == 0, 'input_rows, input_cols must be multiple of 32'
         encoder_input = tf.keras.layers.Input(shape=self.input_shape, name='encoder_input')
         x = encoder_input
         features = []
@@ -58,27 +85,14 @@ class Model:
             if i == len(self.channels) - 1:
                 x = self.conv2d(x, channel, 3, 1, bn=bn)
             else:
-                if self.denoising_model:
-                    x = self.conv2d(x, channel, 3, 1, bn=bn)
-                    features.append(x)
-                    x = self.max_pool(x)
-                else:
-                    x = self.conv2d(x, channel, 3, 2, bn=bn)
-        x = x if self.denoising_model else self.encoding_layer(x, self.latent_dim)
+                x = self.conv2d(x, channel, 3, 2, bn=bn)
+        x = self.encoding_layer(x, self.latent_dim)
         encoder_output = x
 
-        if self.denoising_model:
-            features = list(reversed(features))
-        if not self.denoising_model:
-            x = self.dense(x, self.latent_rows * self.latent_cols * self.channels[-1], bn=bn)
-            x = self.reshape(x, (self.latent_rows, self.latent_cols, self.channels[-1]))
+        x = self.dense(x, self.latent_rows * self.latent_cols * self.channels[-1], bn=bn)
+        x = self.reshape(x, (self.latent_rows, self.latent_cols, self.channels[-1]))
         for i, channel in enumerate(list(reversed(self.channels))[1:]):
-            if self.denoising_model:
-                x = self.upsampling(x)
-                x = self.conv2d(x, channel, 3, 1, bn=bn)
-                x = self.add([x, features[i]])
-            else:
-                x = self.conv2d_transpose(x, channel, 3, 2, bn=bn)
+            x = self.conv2d_transpose(x, channel, 3, 2, bn=bn)
         x = self.decoding_layer(x)
         decoder_output = x
         self.encoder = tf.keras.models.Model(encoder_input, encoder_output)
