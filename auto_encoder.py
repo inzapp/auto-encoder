@@ -114,6 +114,9 @@ class AutoEncoder:
             exit(0)
         model = tf.keras.models.load_model(model_path, compile=False)
         input_shape = model.input_shape[1:]
+        if self.denoising_model:
+            return model, None, input_shape
+
         ae = None
         encoder = None
         try:
@@ -135,8 +138,8 @@ class AutoEncoder:
             return tf.square(y_true - y_pred) + tf.abs(y_true - y_pred)
         with tf.GradientTape() as tape:
             y_pred = model(x, training=True)
-            if x.shape[-1] == 1:
-                loss = criteria(x, y_pred)
+            if x.shape[-1] == 1 or yuv_input:
+                ace = tf.square(y_true - y_pred) + tf.abs(y_true - y_pred)
             else:
                 r_true, r_pred = x[:, :, :, 0], y_pred[:, :, :, 0]
                 g_true, g_pred = x[:, :, :, 1], y_pred[:, :, :, 1]
@@ -152,8 +155,8 @@ class AutoEncoder:
 
                 yuv_true = tf.concat([yuv_y_true, yuv_u_true, yuv_v_true], axis=-1)
                 yuv_pred = tf.concat([yuv_y_pred, yuv_u_pred, yuv_v_pred], axis=-1)
-                loss = criteria(yuv_true, yuv_pred)
-            loss = tf.reduce_mean(loss)
+                ace = tf.square(yuv_true - yuv_pred) + tf.abs(yuv_true - yuv_pred)
+            loss = tf.reduce_mean(ace)
         gradients = tape.gradient(loss, model.trainable_variables)
         optimizer.apply_gradients(zip(gradients, model.trainable_variables))
         return loss
@@ -220,7 +223,7 @@ class AutoEncoder:
         print('start training')
         iteration_count = 0
         os.makedirs(self.checkpoint_path, exist_ok=True)
-        optimizer = tf.keras.optimizers.RMSprop(lr=self.lr)
+        optimizer = tf.keras.optimizers.RMSprop(learning_rate=self.lr)
         lr_scheduler = LRScheduler(lr=self.lr, iterations=self.iterations, warm_up=self.warm_up, policy='step')
         while True:
             for x in self.data_generator:
