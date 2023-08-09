@@ -160,22 +160,25 @@ class AutoEncoder:
 
     def predict(self, img, input_image_concat=True):
         if self.input_type in ['nv12', 'nv21']:
-            img = self.data_generator.convert_yuv3ch2bgr(img, self.input_type)
-        x = DataGenerator.normalize(img).reshape((1,) + self.input_shape)
+            origin_bgr = self.data_generator.convert_yuv3ch2bgr(img, self.input_type)
+        elif self.input_type == 'rgb':
+            origin_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        else:
+            origin_bgr = img
 
+        x = DataGenerator.normalize(img).reshape((1,) + self.input_shape)
         output = np.array(self.graph_forward(self.ae, x)).reshape(self.input_shape)
         decoded_image = DataGenerator.denormalize(output)
         if self.input_type in ['nv12', 'nv21']:
             decoded_image = self.data_generator.convert_yuv3ch2bgr(decoded_image, self.input_type)
+        elif self.input_type == 'rgb':
+            decoded_image = cv2.cvtColor(decoded_image, cv2.COLOR_RGB2BGR)
 
         if input_image_concat:
-            decoded_image = np.concatenate((img.reshape(self.input_shape), decoded_image.reshape(self.input_shape)), axis=1)
+            origin_bgr = origin_bgr.reshape(self.input_shape)
+            decoded_image = decoded_image.reshape(self.input_shape)
+            decoded_image = np.concatenate((origin_bgr, decoded_image), axis=1)
         return decoded_image
-
-    def imshow(self, title, img):
-        if self.input_shape[-1] == 3:
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        cv2.imshow(title, img)
 
     def predict_images(self, model_path='', image_path='', dataset='validation'):
         self.init(model_path=model_path)
@@ -202,7 +205,7 @@ class AutoEncoder:
         for path in image_paths:
             img = self.data_generator.load_image(path)
             decoded_image = self.predict(img)
-            self.imshow('decoded_image', decoded_image)
+            cv2.imshow('decoded_image', decoded_image)
             key = cv2.waitKey(0)
             if key == 27:
                 exit(0)
@@ -245,6 +248,6 @@ class AutoEncoder:
             img_path = np.random.choice(self.validation_image_paths)
             img = self.data_generator.load_image(img_path)
             decoded_image = self.predict(img)
-            self.imshow('training view', decoded_image)
+            cv2.imshow('training view', decoded_image)
             cv2.waitKey(1)
 

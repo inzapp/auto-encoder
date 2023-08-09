@@ -131,15 +131,39 @@ class DataGenerator:
 
     def load_image(self, image_path):
         data = np.fromfile(image_path, dtype=np.uint8)
-        if self.input_type == 'gray':
-            img = cv2.imdecode(data, cv2.IMREAD_GRAYSCALE)
-        else:
-            img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        img = cv2.imdecode(data, cv2.IMREAD_GRAYSCALE if self.input_type == 'gray' else cv2.IMREAD_COLOR)
 
         img = self.resize(img, (self.input_shape[1], self.input_shape[0]))
         if self.input_type == 'rgb':
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         elif self.input_type in ['nv12', 'nv21']:
             img = self.convert_bgr2yuv3ch(img, self.input_type)
-        return img
+
+        img_noise = img
+        if self.denoising_model:
+            range_min = np.random.uniform(0.0, 100.0)
+            range_max = np.random.uniform(0.0, 100.0)
+            img_noise = np.asarray(img).astype('float32')
+            if self.input_type in ['nv12', 'nv21']:
+                img_noise[:, :, 0] += np.random.uniform(-range_min, range_max, size=img[:, :, 0].shape)
+            else:
+                img_noise += np.random.uniform(-range_min, range_max, size=img.shape)
+            img_noise = np.clip(img_noise, 0.0, 255.0).astype('uint8')
+        return img, img_noise
+
+    # def load_image(self, image_path):
+    #     if self.denoising_model or self.input_shape[-1] == 3:
+    #         img = cv2.imdecode(np.fromfile(image_path, dtype=np.uint8), cv2.IMREAD_COLOR)  # ISONoise need rgb image
+    #         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    #     else:
+    #         img = cv2.imdecode(np.fromfile(image_path, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    #     img = self.resize(img, (self.input_shape[1], self.input_shape[0]))
+    #     img = self.transform(image=img)['image']
+    #     img_noise = None
+    #     if self.denoising_model:
+    #         img_noise = self.transform_noise(image=img)['image']
+    #         if self.input_shape[-1] == 1:
+    #             img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    #             img_noise = cv2.cvtColor(img_noise, cv2.COLOR_RGB2GRAY)
+    #     return img, img_noise
 
