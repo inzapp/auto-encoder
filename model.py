@@ -32,49 +32,18 @@ os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
 
 class Model:
-    def __init__(self, input_shape, latent_dim, denoising_model):
+    def __init__(self, input_shape, latent_dim):
         self.input_shape = input_shape
         self.latent_dim = latent_dim
-        self.denoising_model = denoising_model
         self.ae = None
         self.encoder = None
-        if self.denoising_model:
-            self.channels = [4, 8, 16]
-        else:
-            self.channels = [16, 32, 64, 128, 256, 512]
+        self.channels = [16, 32, 64, 128, 256, 512]
         scale = pow(2, len(self.channels) - 1)
         self.latent_rows = input_shape[0] // scale
         self.latent_cols = input_shape[1] // scale
 
     def build(self, bn=False):
-        if self.denoising_model:
-            return self.build_denoising_model(bn=bn)
-        else:
-            return self.build_model(bn=bn)
-
-    def build_denoising_model(self, bn):
-        assert self.input_shape[0] % 4 == 0 and self.input_shape[1] % 4 == 0, 'input_rows, input_cols must be multiple of 4 when training denoising model'
-        encoder_input = tf.keras.layers.Input(shape=self.input_shape, name='encoder_input')
-        x = encoder_input
-        features = []
-        for i, channel in enumerate(self.channels):
-            x = self.conv2d(x, channel, 3, 1, bn=bn)
-            if i == len(self.channels) - 1:
-                break
-            features.append(x)
-            x = self.conv2d(x, channel, 3, 2, bn=bn)
-
-        encoder_output = x
-        features = list(reversed(features))
-        for i, channel in enumerate(list(reversed(self.channels))[1:]):
-            x = self.conv2d_transpose(x, channel, 3, 2, bn=bn)
-            x = self.add([x, features[i]])
-            if i == 0:
-                x = self.conv2d(x, channel, 3, 1, bn=bn)
-        decoder_output = self.decoding_layer(x)
-        self.encoder = tf.keras.models.Model(encoder_input, encoder_output)
-        self.ae = tf.keras.models.Model(encoder_input, decoder_output)
-        return self.ae, self.encoder
+        return self.build_model(bn=bn)
 
     def build_model(self, bn):
         assert self.input_shape[0] % 32 == 0 and self.input_shape[1] % 32 == 0, 'input_rows, input_cols must be multiple of 32'
@@ -168,8 +137,5 @@ class Model:
         return tf.keras.layers.Flatten()(x)
 
     def summary(self):
-        if not self.denoising_model:
-            self.encoder.summary()
-            print()
         self.ae.summary()
 

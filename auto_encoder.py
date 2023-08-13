@@ -34,7 +34,6 @@ from time import time
 from model import Model
 from generator import DataGenerator
 from lr_scheduler import LRScheduler
-from ace import AdaptiveCrossentropy
 
 
 class AutoEncoder:
@@ -50,7 +49,6 @@ class AutoEncoder:
                  latent_dim,
                  iterations,
                  save_interval,
-                 denoising_model,
                  training_view,
                  checkpoint_path='checkpoint'):
         assert save_interval >= 1000
@@ -65,7 +63,6 @@ class AutoEncoder:
         self.save_interval = save_interval
         self.iterations = iterations
         self.training_view = training_view
-        self.denoising_model = denoising_model
         self.checkpoint_path = checkpoint_path
         self.live_view_previous_time = time()
 
@@ -98,14 +95,12 @@ class AutoEncoder:
         else:
             self.ae, self.encoder = Model(
                 input_shape=self.input_shape,
-                latent_dim=self.latent_dim,
-                denoising_model=self.denoising_model).build()
+                latent_dim=self.latent_dim).build()
         self.data_generator = DataGenerator(
             image_paths=self.train_image_paths,
             input_shape=self.input_shape,
             input_type=self.input_type,
-            batch_size=self.batch_size,
-            denoising_model=self.denoising_model)
+            batch_size=self.batch_size)
 
     def is_valid_path(self, path):
         return os.path.exists(path) and os.path.isdir(path)
@@ -135,15 +130,17 @@ class AutoEncoder:
         return ae, encoder, input_shape
 
     @tf.function
-    def compute_gradient(self, model, optimizer, x, y_true, yuv_input):
+    def compute_gradient(self, model, optimizer, x):
+        def criteria(y_true, y_pred):
+            return tf.square(y_true - y_pred) + tf.abs(y_true - y_pred)
         with tf.GradientTape() as tape:
             y_pred = model(x, training=True)
-            if x.shape[-1] == 1 or yuv_input:
-                ace = AdaptiveCrossentropy()(y_true, y_pred)
+            if x.shape[-1] == 1:
+                loss = criteria(x, y_pred)
             else:
-                r_true, r_pred = y_true[:, :, :, 0], y_pred[:, :, :, 0]
-                g_true, g_pred = y_true[:, :, :, 1], y_pred[:, :, :, 1]
-                b_true, b_pred = y_true[:, :, :, 2], y_pred[:, :, :, 2]
+                r_true, r_pred = x[:, :, :, 0], y_pred[:, :, :, 0]
+                g_true, g_pred = x[:, :, :, 1], y_pred[:, :, :, 1]
+                b_true, b_pred = x[:, :, :, 2], y_pred[:, :, :, 2]
 
                 yuv_y_true = r_true *  0.299000 + g_true *  0.587000 + b_true *  0.114000
                 yuv_u_true = r_true * -0.168736 + g_true * -0.331264 + b_true *  0.500000 + 0.5
@@ -155,8 +152,8 @@ class AutoEncoder:
 
                 yuv_true = tf.concat([yuv_y_true, yuv_u_true, yuv_v_true], axis=-1)
                 yuv_pred = tf.concat([yuv_y_pred, yuv_u_pred, yuv_v_pred], axis=-1)
-                ace = AdaptiveCrossentropy()(yuv_true, yuv_pred)
-            loss = tf.reduce_mean(ace)
+                loss = criteria(yuv_true, yuv_pred)
+            loss = tf.reduce_mean(loss)
         gradients = tape.gradient(loss, model.trainable_variables)
         optimizer.apply_gradients(zip(gradients, model.trainable_variables))
         return loss
@@ -203,9 +200,7 @@ class AutoEncoder:
             return
 
         for path in image_paths:
-            img, img_noise = self.data_generator.load_image(path)
-            if self.denoising_model and np.random.uniform() < 0.5:
-                img = img_noise
+            img = self.data_generator.load_image(path)
             decoded_image = self.predict(img)
             self.imshow('decoded_image', decoded_image)
             key = cv2.waitKey(0)
@@ -225,19 +220,16 @@ class AutoEncoder:
         optimizer = tf.keras.optimizers.RMSprop(lr=self.lr)
         lr_scheduler = LRScheduler(lr=self.lr, iterations=self.iterations, warm_up=self.warm_up, policy='step')
         while True:
-            for batch_x, batch_y in self.data_generator:
+            for x in self.data_generator:
                 lr_scheduler.update(optimizer, iteration_count)
-                loss = self.compute_gradient(self.ae, optimizer, batch_x, batch_y, False)
+                loss = self.compute_gradient(self.ae, optimizer, x)
                 iteration_count += 1
                 print(f'\r[iteration_count : {iteration_count:6d}] loss : {loss:>8.4f}', end='')
                 if self.training_view:
                     self.training_view_function()
                 if iteration_count % self.save_interval == 0:
-                    if self.denoising_model:
-                        self.ae.save(f'{self.checkpoint_path}/denoising_ae_{iteration_count}_iter.h5', include_optimizer=False)
-                    else:
-                        self.ae.save(f'{self.checkpoint_path}/ae_{iteration_count}_iter.h5', include_optimizer=False)
-                        self.encoder.save(f'{self.checkpoint_path}/encoder_{iteration_count}_iter.h5', include_optimizer=False)
+                    self.ae.save(f'{self.checkpoint_path}/ae_{iteration_count}_iter.h5', include_optimizer=False)
+                    self.encoder.save(f'{self.checkpoint_path}/encoder_{iteration_count}_iter.h5', include_optimizer=False)
                 if iteration_count == self.iterations:
                     print('\ntrain end successfully')
                     return
@@ -251,9 +243,7 @@ class AutoEncoder:
         if cur_time - self.live_view_previous_time > 0.5:
             self.live_view_previous_time = cur_time
             img_path = np.random.choice(self.validation_image_paths)
-            img, img_noise = self.data_generator.load_image(img_path)
-            if self.denoising_model:
-                img = img_noise
+            img = self.data_generator.load_image(img_path)
             decoded_image = self.predict(img)
             self.imshow('training view', decoded_image)
             cv2.waitKey(1)

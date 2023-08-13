@@ -42,7 +42,6 @@ if __name__ == '__main__':
         latent_dim=32,
         iterations=100000,
         save_interval=5000,
-        denoising_model=False,
         training_view=False)
 
     parser = argparse.ArgumentParser()
