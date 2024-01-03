@@ -38,11 +38,11 @@ from lr_scheduler import LRScheduler
 
 class AutoEncoder:
     def __init__(self,
-                 train_image_path,
-                 validation_image_path,
                  input_rows,
                  input_cols,
-                 input_type,
+                 input_channels,
+                 train_image_path,
+                 validation_image_path,
                  lr,
                  warm_up,
                  batch_size,
@@ -54,8 +54,7 @@ class AutoEncoder:
         assert save_interval >= 1000
         self.train_image_path = train_image_path
         self.validation_image_path = validation_image_path
-        self.input_shape = (input_rows, input_cols, 1 if input_type == 'gray' else 3)
-        self.input_type = input_type
+        self.input_shape = (input_rows, input_cols, input_channels)
         self.lr = lr
         self.warm_up = warm_up
         self.batch_size = batch_size
@@ -93,13 +92,10 @@ class AutoEncoder:
         if model_path != '':
             self.ae, self.encoder, self.input_shape = self.load_model(model_path)
         else:
-            self.ae, self.encoder = Model(
-                input_shape=self.input_shape,
-                latent_dim=self.latent_dim).build()
+            self.ae, self.encoder = Model(input_shape=self.input_shape, latent_dim=self.latent_dim).build()
         self.data_generator = DataGenerator(
             image_paths=self.train_image_paths,
             input_shape=self.input_shape,
-            input_type=self.input_type,
             batch_size=self.batch_size)
 
     def is_valid_path(self, path):
@@ -114,8 +110,6 @@ class AutoEncoder:
             exit(0)
         model = tf.keras.models.load_model(model_path, compile=False)
         input_shape = model.input_shape[1:]
-        if self.denoising_model:
-            return model, None, input_shape
 
         ae = None
         encoder = None
@@ -134,54 +128,20 @@ class AutoEncoder:
 
     @tf.function
     def compute_gradient(self, model, optimizer, x):
-        def criteria(y_true, y_pred):
-            return tf.square(y_true - y_pred) + tf.abs(y_true - y_pred)
         with tf.GradientTape() as tape:
             y_pred = model(x, training=True)
-            if x.shape[-1] == 1 or yuv_input:
-                ace = tf.square(y_true - y_pred) + tf.abs(y_true - y_pred)
-            else:
-                r_true, r_pred = x[:, :, :, 0], y_pred[:, :, :, 0]
-                g_true, g_pred = x[:, :, :, 1], y_pred[:, :, :, 1]
-                b_true, b_pred = x[:, :, :, 2], y_pred[:, :, :, 2]
-
-                yuv_y_true = r_true *  0.299000 + g_true *  0.587000 + b_true *  0.114000
-                yuv_u_true = r_true * -0.168736 + g_true * -0.331264 + b_true *  0.500000 + 0.5
-                yuv_v_true = r_true *  0.500000 + g_true * -0.418688 + b_true * -0.081312 + 0.5
-
-                yuv_y_pred = r_pred *  0.299000 + g_pred *  0.587000 + b_pred *  0.114000
-                yuv_u_pred = r_pred * -0.168736 + g_pred * -0.331264 + b_pred *  0.500000 + 0.5
-                yuv_v_pred = r_pred *  0.500000 + g_pred * -0.418688 + b_pred * -0.081312 + 0.5
-
-                yuv_true = tf.concat([yuv_y_true, yuv_u_true, yuv_v_true], axis=-1)
-                yuv_pred = tf.concat([yuv_y_pred, yuv_u_pred, yuv_v_pred], axis=-1)
-                ace = tf.square(yuv_true - yuv_pred) + tf.abs(yuv_true - yuv_pred)
-            loss = tf.reduce_mean(ace)
+            loss = tf.reduce_mean(tf.square(x - y_pred))
         gradients = tape.gradient(loss, model.trainable_variables)
         optimizer.apply_gradients(zip(gradients, model.trainable_variables))
         return loss
 
     def predict(self, img, input_image_concat=True):
-        if self.input_type in ['nv12', 'nv21']:
-            origin_bgr = self.data_generator.convert_yuv3ch2bgr(img, self.input_type)
-        elif self.input_type == 'rgb':
-            origin_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        else:
-            origin_bgr = img
-
-        x = DataGenerator.normalize(img).reshape((1,) + self.input_shape)
-        output = np.array(self.graph_forward(self.ae, x)).reshape(self.input_shape)
-        decoded_image = DataGenerator.denormalize(output)
-        if self.input_type in ['nv12', 'nv21']:
-            decoded_image = self.data_generator.convert_yuv3ch2bgr(decoded_image, self.input_type)
-        elif self.input_type == 'rgb':
-            decoded_image = cv2.cvtColor(decoded_image, cv2.COLOR_RGB2BGR)
-
+        x = DataGenerator.preprocess(img).reshape((1,) + self.input_shape)
+        y = np.array(self.graph_forward(self.ae, x))[0]
+        img_reconstructed = self.postprocess(y)
         if input_image_concat:
-            origin_bgr = origin_bgr.reshape(self.input_shape)
-            decoded_image = decoded_image.reshape(self.input_shape)
-            decoded_image = np.concatenate((origin_bgr, decoded_image), axis=1)
-        return decoded_image
+            img_reconstructed = np.concatenate((img, img_reconstructed), axis=1)
+        return img_reconstructed
 
     def predict_images(self, model_path='', image_path='', dataset='validation'):
         self.init(model_path=model_path)
@@ -207,11 +167,17 @@ class AutoEncoder:
 
         for path in image_paths:
             img = self.data_generator.load_image(path)
-            decoded_image = self.predict(img)
-            cv2.imshow('decoded_image', decoded_image)
+            img_reconstructed = self.predict(img)
+            cv2.imshow('img_reconstructed', img_reconstructed)
             key = cv2.waitKey(0)
             if key == 27:
                 exit(0)
+
+    def postprocess(self, y):
+        img = np.asarray(np.clip((y * 255.0), 0.0, 255.0)).astype('uint8').reshape(self.input_shape)
+        if img.shape[-1] == 3:
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        return img
 
     def train(self, model_path=''):
         self.init(model_path=model_path)
@@ -250,7 +216,7 @@ class AutoEncoder:
             self.live_view_previous_time = cur_time
             img_path = np.random.choice(self.validation_image_paths)
             img = self.data_generator.load_image(img_path)
-            decoded_image = self.predict(img)
-            cv2.imshow('training view', decoded_image)
+            img_reconstructed = self.predict(img)
+            cv2.imshow('training view', img_reconstructed)
             cv2.waitKey(1)
 
